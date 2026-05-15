@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+data/boss_hunter.db
+data/auth/
