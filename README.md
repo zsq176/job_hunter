@@ -1,25 +1,25 @@
 # Job Hunter
 
-AI-powered job hunting assistant for Boss Zhipin. Automates job search, JD analysis, resume matching, and candidate outreach through MCP protocol.
+基于 MCP 协议的 AI 求职助手，支持 Boss 直聘自动化求职流程：岗位搜索、JD 解析、简历匹配、自动打招呼。
 
-## Features
+## 功能
 
-- **Job Search**: Search and persist job listings with structured filtering
-- **JD Analysis**: Extract skills, requirements, and selling points via LLM
-- **Resume Matching**: Two-phase scoring (rule filter + LLM deep evaluation)
-- **Auto Outreach**: Customized greeting messages with rate limiting
-- **Pipeline Tracking**: End-to-end status flow per position
-- **Resume Audit**: Keyword gap analysis against market data
-- **Weekly Report**: Application funnel and conversion metrics
+- 岗位搜索：关键词/城市筛选，自动入库去重持久化
+- JD 深度解析：LLM 提取技能要求、核心职责、公司卖点
+- 简历匹配评分：两阶段评分（规则过滤 + LLM 深度评估）
+- 自动打招呼：基于 JD 生成定制话术，带限流策略
+- 流水线追踪：每个岗位的完整状态流转
+- 简历分析：市场关键词缺口分析，薪资定位建议
+- 求职周报：投递漏斗与转化率统计
 
-## Prerequisites
+## 前置依赖
 
 - Python 3.10+
-- Node.js 18+ (for OpenClaw)
-- Chrome browser (for login)
-- DeepSeek API key (or any OpenAI-compatible LLM)
+- Node.js 18+（运行 OpenClaw）
+- Chrome 浏览器（用于登录）
+- DeepSeek API Key（或兼容 OpenAI 接口的 LLM）
 
-## Installation
+## 安装
 
 ```bash
 pip install boss-agent-cli
@@ -28,71 +28,95 @@ patchright install chromium
 git clone https://github.com/zsq176/job_hunter.git
 cd job_hunter
 pip install -r requirements.txt
-
-cp .env.example .env
-# Edit .env: set LLM_API_KEY
 ```
 
-## Usage
+## 配置
 
-### MCP Server
+```bash
+cp .env.example .env
+# 编辑 .env，填入 LLM_API_KEY
+```
 
-Register in your OpenClaw configuration:
+环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `LLM_API_KEY` | DeepSeek 或 OpenAI API Key |
+| `LLM_MODEL` | 模型名称（默认 deepseek-chat） |
+| `LOG_LEVEL` | 日志级别 |
+
+## 使用
+
+在 OpenClaw 配置中注册：
 
 ```json
 {
   "mcpServers": {
     "job-hunter": {
       "command": "python",
-      "args": ["<path>/job_hunter/server.py"]
+      "args": ["<路径>/job_hunter/server.py"]
     }
   }
 }
 ```
 
-Then interact via natural language:
-
-> "Search Golang jobs in Guangzhou"  
-> "Analyze job matching for my resume"  
-> "Send greetings to top 10 matched positions"  
-> "Show my weekly application report"
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `boss_login` | Authenticate with Boss Zhipin (4-tier fallback) |
-| `preference_save` | Save job preferences (city, salary, keywords, blacklist) |
-| `preference_get` | View current preferences |
-| `job_search` | Search jobs and persist to database |
-| `job_list` | Query stored jobs with filters and pagination |
-| `job_analyze` | Deep JD analysis via LLM |
-| `job_match` | Resume-job matching (rules + LLM hybrid) |
-| `greeting_preview` | Preview AI-generated greeting text |
-| `greeting_send` | Send greetings with rate limiting |
-| `pipeline_status` | Application pipeline overview |
-| `resume_analyze` | Resume strengths, weaknesses, suggestions |
-| `resume_suggest` | Market-driven resume improvement advice |
-| `report_generate` | Weekly application summary |
-
-## Architecture
+### 对话示例
 
 ```
-Agent (OpenClaw) <-> MCP Server <-> Tools <-> BossOperator -> boss-agent-cli -> Zhipin API
+用户：搜一下广州的 Golang 岗位
+AI：正在搜索...
+    找到 48 个岗位，新增 35 个。
+    需要我分析匹配度吗？
+
+用户：分析一下，给匹配度高的打招呼
+AI：分析完成。强烈推荐 5 个：
+    - Shopee 后端开发 25-40K 评分 92
+    - 字节跳动 Go后端 30-50K 评分 88
+    已发送 5 个打招呼。
+
+用户：看看我的求职进度
+AI：搜索 187 → 分析 156 → 匹配 42 → 已打 28 → 回复 8
+    回复率 28.6%
+
+用户：分析一下简历
+AI：建议补充"高并发"关键词（87%的目标岗位要求）
+    项目描述增加量化数据
+    薪资期望 25K，市场中位数 22K
+```
+
+### 工具列表
+
+| 工具 | 说明 |
+|------|------|
+| `boss_login` | 登录 Boss 直聘（四级降级链路） |
+| `preference_save` | 保存求职意向配置 |
+| `preference_get` | 查看当前配置 |
+| `job_search` | 搜索岗位并入库 |
+| `job_list` | 查询已存储的岗位列表 |
+| `job_analyze` | LLM 深度分析 JD |
+| `job_match` | 简历匹配评分（规则+LLM 混合） |
+| `greeting_preview` | 预览 AI 生成的打招呼话术 |
+| `greeting_send` | 发送打招呼（含限流） |
+| `pipeline_status` | 求职流水线概览 |
+| `resume_analyze` | 简历优缺点分析 |
+| `resume_suggest` | 基于市场数据的简历改进建议 |
+| `report_generate` | 生成求职周报 |
+
+## 架构
+
+```
+Agent (OpenClaw) <-> MCP Server <-> Tools <-> BossOperator -> boss-agent-cli -> Boss直聘 API
                                           <-> LLM Client     -> DeepSeek API
                                           <-> Database       -> SQLite
 ```
 
-## Configuration
+## 参考项目
 
-Environment variables (`.env`):
+- [boss-agent-cli](https://github.com/can4hou6joeng4/boss-agent-cli)：Boss 直聘 CLI 客户端，提供浏览器自动化与 API 封装
+- [Auto-JobHunter](https://github.com/jolie-z/Auto-JobHunter)：多平台自动求职系统，LangGraph 多 Agent 架构
+- [boss-zhipin-mcp](https://github.com/Snseam/boss-zhipin-mcp)：Boss 直聘 MCP Server，招聘者端自动化
+- [boss-resume-filter](https://github.com/yaoyouzhong/boss-resume-filter)：候选人自动筛选工具，LLM 评分匹配
 
-| Variable | Description |
-|----------|-------------|
-| `LLM_API_KEY` | DeepSeek or OpenAI API key |
-| `LLM_MODEL` | Model name (default: deepseek-chat) |
-| `LOG_LEVEL` | DEBUG/INFO/WARNING/ERROR |
+## 协议
 
-## License
-
-[MIT](LICENSE)
+MIT
