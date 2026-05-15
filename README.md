@@ -19,14 +19,26 @@
 - Chrome 浏览器（用于登录）
 - DeepSeek API Key（或兼容 OpenAI 接口的 LLM）
 
+## 依赖说明
+
+| 依赖 | 用途 | 为什么需要 |
+|------|------|-----------|
+| `boss-agent-cli` | Python 库 | 封装 Boss 直聘的 API 调用、Cookie 提取、扫码登录 |
+| `patchright install chromium` | 浏览器驱动 | Boss 直聘登录需要操作本地 Chrome 浏览器（扫码） |
+| `LLM_API_KEY` | DeepSeek API | JD 分析、简历匹配、话术生成、周报全靠 LLM |
+
 ## 安装
 
+本机执行：
+
 ```bash
+# 1. 安装底层 Boss 直聘 SDK（用于调用其 API 和登录）
 pip install boss-agent-cli
+
+# 2. 安装 Chromium 浏览器驱动（扫码登录用，装一次即可）
 patchright install chromium
 
-git clone https://github.com/zsq176/job_hunter.git
-cd job_hunter
+# 3. 安装本项目 Python 依赖
 pip install -r requirements.txt
 ```
 
@@ -36,8 +48,6 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env，填入 LLM_API_KEY
 ```
-
-环境变量：
 
 | 变量 | 说明 |
 |------|------|
