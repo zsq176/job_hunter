@@ -102,9 +102,13 @@ matcher   BossOperator LLMClient    Database
 帮我安装并配置 job_hunter 求职助手：https://github.com/zsq176/job_hunter
 ```
 
-Agent 会自动执行：`git clone` → `pip install` → `patchright install chromium` → 创建 `.env` 并引导你填写 API Key → 配置 MCP Server → 验证安装。全程无需手动操作终端。
+Agent 收到后需自动完成：
+1. `git clone` → `pip install` → `patchright install chromium`
+2. 从 `.env.example` 创建 `.env`，**引导用户填写 `LLM_API_KEY`**
+3. **将 job-hunter 注册到当前 Agent 的 MCP 配置文件**（opencode.json / claude_desktop_config.json / openclaw.json / Cline 扩展设置）
+4. **完成后务必提醒用户重启当前 Agent**，否则新注册的 Tool 不会生效
 
-> OpenCode 用户也可以用 `/install https://github.com/zsq176/job_hunter` 触发安装。
+> OpenCode 用户也可以用 `/install https://github.com/zsq176/job_hunter` 触发安装（OpenCode 内置会自动注册 MCP 配置）。
 
 ### 方式二：手动安装
 
@@ -140,7 +144,7 @@ cp .env.example .env
 | **OpenCode** | `opencode.json` → `mcpServers` |
 | **Cline** | VSCode 扩展设置 → MCP Server |
 
-重启 Agent 后即可使用。向 Agent 说 "帮我检查一下配置状态" 验证是否正常运行。
+**配置后必须重启 Agent，否则新注册的 Tool 不会生效。** 重启后向 Agent 说 "帮我检查一下配置状态" 验证是否正常运行。
 
 ## 配置参考
 
