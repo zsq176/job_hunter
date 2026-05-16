@@ -124,25 +124,24 @@ cp .env.example .env
 
 ### 注册到 Agent
 
-安装完成后，在 Agent 的 MCP 配置中添加：
+安装完成后，根据你使用的 Agent 选择对应的配置格式：
 
+| Agent | 配置文件 | 顶层 key | 格式 |
+|-------|---------|----------|------|
+| **OpenCode** | `~/.config/opencode/opencode.json` | `mcp` | 格式 A |
+| **Claude Code** | `~/.claude/claude_desktop_config.json` 或 `.claude/mcp.json` | `mcpServers` | 格式 B |
+| **OpenClaw** | `openclaw.json` | `mcpServers` | 格式 B |
+| **Cline** | VSCode 扩展 → MCP Server | `mcpServers` | 格式 B |
+
+**格式 A – OpenCode：**
 ```json
-{
-  "mcpServers": {
-    "job-hunter": {
-      "command": "python",
-      "args": ["<项目路径>/job_hunter/server.py"]
-    }
-  }
-}
+{"mcp": {"job-hunter": {"type": "local", "enabled": true, "command": ["python", "<路径>/server.py"]}}}
 ```
 
-| Agent | 配置文件 |
-|-------|---------|
-| **OpenClaw** | `openclaw.json` → `mcpServers` |
-| **Claude Code** | `~/.claude/claude_desktop_config.json` → `mcpServers`，或通过 `.claude/mcp.json` |
-| **OpenCode** | `opencode.json` → `mcpServers` |
-| **Cline** | VSCode 扩展设置 → MCP Server |
+**格式 B – Claude Code / OpenClaw / Cline：**
+```json
+{"mcpServers": {"job-hunter": {"command": "python", "args": ["<路径>/server.py"]}}}
+```
 
 **配置后必须重启 Agent，否则新注册的 Tool 不会生效。** 重启后向 Agent 说 "帮我检查一下配置状态" 验证是否正常运行。
 
