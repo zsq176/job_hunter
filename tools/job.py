@@ -1,10 +1,13 @@
 """岗位搜索 & 列表 & 分析 Tool"""
+import logging
 from typing import Optional
 from db.client import Database
 from browser.operator import BossOperator
 from engine.analyzer import analyze_jd
 from llm.client import LLMClient
 from config import LLM_API_KEY
+
+logger = logging.getLogger("tools.job")
 
 
 def job_search(keyword: str, city: Optional[str] = None, max_pages: int = 3) -> dict:
@@ -15,14 +18,16 @@ def job_search(keyword: str, city: Optional[str] = None, max_pages: int = 3) -> 
     all_jobs = []
     for page in range(1, max_pages + 1):
         result = ops.search_jobs(keyword, city=city, page=page)
-        all_jobs.extend(result.get("jobs", []))
-        if len(result.get("jobs", [])) == 0:
+        jobs = result.get("jobs", [])
+        all_jobs.extend(jobs)
+        if not jobs:
             break
 
     if not all_jobs:
         return {"ok": True, "total": 0, "new": 0, "message": "未找到匹配岗位"}
 
     stats = db.insert_jobs(all_jobs)
+    logger.info("job_search keyword=%s total=%d new=%d", keyword, stats["total"], stats["new"])
     return {
         "ok": True,
         "total": stats["total"],
@@ -70,6 +75,7 @@ def job_analyze(job_ids: Optional[list[str]] = None) -> dict:
                     **analysis,
                 })
         except Exception as e:
+            logger.warning("job_analyze failed for %s: %s", job.get("id"), e)
             results.append({"job_id": job["id"], "error": str(e)})
 
     return {"ok": True, "analyzed": len(results), "results": results}

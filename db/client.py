@@ -2,13 +2,18 @@
 import json
 import sqlite3
 import hashlib
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 from contextlib import contextmanager
 
-from config import DB_PATH
-from db.schema import SCHEMA_SQL
+from config import DB_PATH, MATCH_HIGH_SCORE
+from db.schema import SCHEMA_SQL, MIGRATIONS
+
+logger = logging.getLogger("db")
+
+SORT_WHITELIST = {"score", "created_at", "salary", "salary_min", "salary_max", "title", "company"}
 
 
 class Database:
@@ -22,6 +27,11 @@ class Database:
     def _init_schema(self):
         with self._conn() as conn:
             conn.executescript(SCHEMA_SQL)
+            for migration in MIGRATIONS:
+                try:
+                    conn.execute(migration)
+                except sqlite3.OperationalError:
+                    pass
 
     @contextmanager
     def _conn(self):
@@ -47,14 +57,19 @@ class Database:
 
         with self._conn() as conn:
             for job in jobs:
+                sid = job.get("security_id") or job.get("id", "")
+                if not sid:
+                    dup_count += 1
+                    continue
                 try:
-                    conn.execute(
+                    cursor = conn.execute(
                         """INSERT OR IGNORE INTO jobs
-                        (id, platform, title, company, salary_raw, salary_min, salary_max,
+                        (id, encrypt_job_id, platform, title, company, salary_raw, salary_min, salary_max,
                          city, experience, education, welfare, jd_raw, company_info, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
-                            job.get("security_id") or job.get("id", ""),
+                            sid,
+                            job.get("encrypt_job_id", ""),
                             job.get("platform", "zhipin"),
                             job.get("title", ""),
                             job.get("company", ""),
@@ -70,13 +85,14 @@ class Database:
                             now,
                         ),
                     )
-                    if conn.total_changes > 0:
+                    if cursor.rowcount > 0:
                         new_count += 1
                     else:
                         dup_count += 1
                 except sqlite3.IntegrityError:
                     dup_count += 1
 
+        logger.info("insert_jobs total=%d new=%d dup=%d", len(jobs), new_count, dup_count)
         return {"total": len(jobs), "new": new_count, "duplicates": dup_count}
 
     def _parse_salary(self, salary_str: str) -> tuple:
@@ -109,6 +125,9 @@ class Database:
                   score_max: int = None, sort_by: str = "created_at",
                   order: str = "desc", limit: int = 20, offset: int = 0) -> dict:
         """查询岗位列表，支持筛选分页"""
+        if sort_by not in SORT_WHITELIST:
+            sort_by = "created_at"
+
         where = []
         params = []
         if status:
@@ -125,7 +144,9 @@ class Database:
         order_dir = "DESC" if order == "desc" else "ASC"
 
         with self._conn() as conn:
-            total = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE {where_clause}", params).fetchone()[0]
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM jobs WHERE {where_clause}", params
+            ).fetchone()[0]
             rows = conn.execute(
                 f"SELECT * FROM jobs WHERE {where_clause} ORDER BY {sort_by} {order_dir} LIMIT ? OFFSET ?",
                 params + [limit, offset],
@@ -140,11 +161,21 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def get_ungreeted_jobs(self, min_score: int = 70) -> list[dict]:
+    def get_ungreeted_jobs(self, min_score: int = None) -> list[dict]:
+        if min_score is None:
+            min_score = MATCH_HIGH_SCORE
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs WHERE greeting_sent=0 AND score>=? ORDER BY score DESC",
                 (min_score,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_jobs_for_matching(self) -> list[dict]:
+        """获取已分析但未评分的岗位（供匹配工具用）"""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE jd_analyzed IS NOT NULL AND jd_analyzed != '' AND (score IS NULL)"
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -164,15 +195,38 @@ class Database:
                 (message, status, now, job_id),
             )
 
+    def get_today_greeting_count(self) -> int:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM greetings WHERE created_at >= datetime('now', 'start of day', 'localtime')"
+            ).fetchone()
+            return row[0] if row else 0
+
+    def get_recent_greetings(self, days: int = 7) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM greetings WHERE created_at >= datetime('now', ? || ' days', 'localtime')",
+                (f"-{days}",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     # ── 流水线统计 ──
 
     def get_pipeline_stats(self) -> dict:
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-            analyzed = conn.execute("SELECT COUNT(*) FROM jobs WHERE jd_analyzed IS NOT NULL AND jd_analyzed != ''").fetchone()[0]
-            matched = conn.execute("SELECT COUNT(*) FROM jobs WHERE score>=70").fetchone()[0]
-            greeted = conn.execute("SELECT COUNT(*) FROM jobs WHERE greeting_sent=1").fetchone()[0]
-            replied = conn.execute("SELECT COUNT(*) FROM greetings WHERE reply_text IS NOT NULL").fetchone()[0]
+            analyzed = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE jd_analyzed IS NOT NULL AND jd_analyzed != ''"
+            ).fetchone()[0]
+            matched = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE score>=?", (MATCH_HIGH_SCORE,)
+            ).fetchone()[0]
+            greeted = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE greeting_sent=1"
+            ).fetchone()[0]
+            replied = conn.execute(
+                "SELECT COUNT(*) FROM greetings WHERE reply_text IS NOT NULL"
+            ).fetchone()[0]
             return {
                 "total_jobs": total,
                 "analyzed": analyzed,
@@ -202,9 +256,7 @@ class Database:
             if existing:
                 return existing["id"]
 
-            conn.execute(
-                "UPDATE resume_cache SET is_active=0"
-            )
+            conn.execute("UPDATE resume_cache SET is_active=0")
             conn.execute(
                 """INSERT INTO resume_cache (hash, filename, raw_text, is_active, version)
                    VALUES (?,?,?,1, COALESCE((SELECT MAX(version)+1 FROM resume_cache), 1))""",
@@ -238,7 +290,9 @@ class Database:
 
     def get_preference(self, key: str) -> Optional[Any]:
         with self._conn() as conn:
-            row = conn.execute("SELECT value FROM preferences WHERE key=?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM preferences WHERE key=?", (key,)
+            ).fetchone()
             return json.loads(row[0]) if row else None
 
     def get_all_preferences(self) -> dict:
@@ -269,6 +323,13 @@ class Database:
 
         sorted_words = sorted(freq.items(), key=lambda x: -x[1])
         return [
-            {"word": w, "count": c, "frequency": f"{c/total*100:.0f}%"}
+            {"word": w, "count": c, "frequency": f"{c / total * 100:.0f}%"}
             for w, c in sorted_words[:top_n]
         ]
+
+    def get_market_salary_median(self) -> Optional[int]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT AVG((salary_min + salary_max)/2.0) as median FROM jobs WHERE salary_min IS NOT NULL AND salary_max IS NOT NULL"
+            ).fetchone()
+            return round(row[0]) if row and row[0] else None

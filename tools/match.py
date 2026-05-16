@@ -12,24 +12,17 @@ def job_match(resume_text: Optional[str] = None, job_ids: Optional[list[str]] = 
     db = Database()
     llm = LLMClient(api_key=LLM_API_KEY)
 
-    # 获取简历
     if not resume_text:
         resume = db.get_active_resume()
         if not resume:
             return {"ok": False, "error": "请先上传简历", "matched": 0, "results": []}
         resume_text = resume["raw_text"]
 
-    # 获取岗位
     if job_ids:
         jobs = [db.get_job(jid) for jid in job_ids]
         jobs = [j for j in jobs if j]
     else:
-        # 所有已分析但未评分的
-        with db._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE jd_analyzed IS NOT NULL AND jd_analyzed != '' AND (score IS NULL)"
-            ).fetchall()
-            jobs = [dict(r) for r in rows]
+        jobs = db.get_jobs_for_matching()
 
     if not jobs:
         return {"ok": True, "matched": 0, "results": [], "message": "没有需要评分的岗位"}

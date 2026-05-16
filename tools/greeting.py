@@ -1,15 +1,19 @@
 """打招呼 Tool"""
 import time
 import random
+import logging
 from typing import Optional
 from db.client import Database
 from browser.operator import BossOperator
 from engine.greeter import preview_greeting
 from llm.client import LLMClient
-from config import LLM_API_KEY
+from config import (
+    LLM_API_KEY, DAILY_GREET_LIMIT,
+    GREET_INTERVAL_MIN, GREET_INTERVAL_MAX,
+    GREET_BATCH_SIZE, GREET_BATCH_REST,
+)
 
-# 每日打招呼上限
-DAILY_LIMIT = 50
+logger = logging.getLogger("tools.greeting")
 
 
 def greeting_preview(job_id: str, tone: str = "专业") -> dict:
@@ -37,26 +41,22 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
     ops = BossOperator()
     llm = LLMClient(api_key=LLM_API_KEY)
 
-    # 检查登录
     status = ops.check_status()
     if not status.get("logged_in"):
         return {"ok": False, "error": "AUTH_REQUIRED", "message": "请先登录 Boss直聘"}
 
-    # 检查每日限额
-    with db._conn() as conn:
-        today_count = conn.execute(
-            "SELECT COUNT(*) FROM greetings WHERE created_at >= datetime('now', 'start of day', 'localtime')"
-        ).fetchone()[0]
-    if today_count >= DAILY_LIMIT:
-        return {"ok": False, "error": "DAILY_LIMIT", "message": f"今日已发 {today_count} 条，达到上限 {DAILY_LIMIT}"}
+    today_count = db.get_today_greeting_count()
+    if today_count >= DAILY_GREET_LIMIT:
+        return {"ok": False, "error": "DAILY_LIMIT",
+                "message": f"今日已发 {today_count} 条，达到上限 {DAILY_GREET_LIMIT}"}
 
     resume = db.get_active_resume()
     resume_text = resume["raw_text"] if resume else ""
 
     results = []
     sent_count = 0
-    for job_id in job_ids:
-        if today_count + sent_count >= DAILY_LIMIT:
+    for idx, job_id in enumerate(job_ids):
+        if today_count + sent_count >= DAILY_GREET_LIMIT:
             break
 
         job = db.get_job(job_id)
@@ -64,7 +64,6 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
             results.append({"job_id": job_id, "status": "failed", "error": "岗位不存在"})
             continue
 
-        # 生成话术
         if custom_message:
             message = custom_message
         else:
@@ -74,27 +73,29 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
             results.append({"job_id": job_id, "status": "dry_run", "greeting": message})
             continue
 
-        # 发送
         security_id = job.get("id", "")
-        encrypt_job_id = job.get("job_id", "")
+        encrypt_job_id = job.get("encrypt_job_id", "") or security_id
         resp = ops.greet(security_id, encrypt_job_id, message)
 
         if resp.get("ok"):
             db.record_greeting(job_id, "success", message)
             results.append({"job_id": job_id, "status": "success", "greeting": message})
             sent_count += 1
+            logger.info("greeting sent job_id=%s", job_id)
         else:
-            error = resp.get("error", "UNKNOWN")
-            db.record_greeting(job_id, "failed", message, error=str(resp))
-            results.append({"job_id": job_id, "status": "failed", "error": error})
-            if error == "RATE_LIMITED":
-                break  # 限流了，停
+            error_code = resp.get("error", "UNKNOWN")
+            db.record_greeting(job_id, "failed", message, error=error_code)
+            results.append({"job_id": job_id, "status": "failed", "error": error_code})
+            logger.warning("greeting failed job_id=%s error=%s", job_id, error_code)
+            if error_code == "RATE_LIMITED":
+                break
 
-        # 间隔 10-30 秒
-        if sent_count < len(job_ids) and sent_count % 10 != 0:
-            time.sleep(random.uniform(10, 30))
-        elif sent_count % 10 == 0 and sent_count > 0:
-            time.sleep(300)  # 每10条休息5分钟
+        if idx < len(job_ids) - 1 and sent_count > 0:
+            if sent_count % GREET_BATCH_SIZE == 0:
+                logger.info("batch rest %ds after %d sends", GREET_BATCH_REST, sent_count)
+                time.sleep(GREET_BATCH_REST)
+            else:
+                time.sleep(random.uniform(GREET_INTERVAL_MIN, GREET_INTERVAL_MAX))
 
     return {
         "ok": True,

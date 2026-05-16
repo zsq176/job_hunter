@@ -1,26 +1,35 @@
 """匹配评分引擎（规则 + LLM 混合）"""
+import json
+import logging
+from datetime import datetime
 from typing import Optional
 from db.client import Database
 from llm.client import LLMClient
+from config import (
+    MATCH_CITY_SCORE, MATCH_SALARY_SCORE, MATCH_MUST_KEYWORD_SCORE,
+    MATCH_BONUS_KEYWORD_SCORE, MATCH_WELFARE_SCORE,
+    MATCH_KEYWORD_CAP, MATCH_WELFARE_CAP,
+    MATCH_RULE_LLM_THRESHOLD, MATCH_RULE_WEIGHT, MATCH_LLM_WEIGHT,
+    MATCH_PASS_THRESHOLD,
+)
+
+logger = logging.getLogger("engine.matcher")
 
 
 def rule_filter(job: dict, prefs: dict) -> tuple[bool, int, str]:
-    """规则层过滤评分（快），复用 boss-agent-cli 类似逻辑"""
+    """规则层过滤评分（快）"""
     reasons = []
     score = 0
 
-    # 城市匹配
     cities = prefs.get("cities", [])
     if cities and job.get("city"):
-        for c in cities:
-            if c in job.get("city", ""):
-                score += 25
-                reasons.append("城市匹配")
-                break
+        matched = any(c in job.get("city", "") for c in cities if c)
+        if matched:
+            score += MATCH_CITY_SCORE
+            reasons.append("城市匹配")
         else:
             return False, 0, "城市不匹配"
 
-    # 薪资检查
     salary_min = prefs.get("salary_min")
     salary_max = prefs.get("salary_max")
     job_salary_min = job.get("salary_min")
@@ -31,10 +40,9 @@ def rule_filter(job: dict, prefs: dict) -> tuple[bool, int, str]:
     if salary_max and job_salary_min and job_salary_min > salary_max:
         return False, 0, f"薪资下限{job_salary_min}K高于上限{salary_max}K"
     if salary_min or salary_max:
-        score += 25
+        score += MATCH_SALARY_SCORE
         reasons.append("薪资在范围内")
 
-    # 黑名单过滤
     blacklist = prefs.get("blacklist", [])
     jd_text = (job.get("title", "") + " " + job.get("jd_raw", "") + " " +
                job.get("company", "")).lower()
@@ -42,7 +50,6 @@ def rule_filter(job: dict, prefs: dict) -> tuple[bool, int, str]:
         if word.lower() in jd_text:
             return False, 0, f"命中排除词: {word}"
 
-    # 关键词匹配（加分）
     must_keywords = prefs.get("keywords_must", [])
     bonus_keywords = prefs.get("keywords_bonus", [])
     combined_text = (job.get("title", "") + " " + job.get("jd_raw", "")).lower()
@@ -52,23 +59,29 @@ def rule_filter(job: dict, prefs: dict) -> tuple[bool, int, str]:
         if kw.lower() in combined_text:
             keyword_hits += 1
     if keyword_hits > 0:
-        score += min(keyword_hits * 5, 15)
+        score += min(keyword_hits * MATCH_MUST_KEYWORD_SCORE, MATCH_KEYWORD_CAP)
         reasons.append(f"命中{keyword_hits}个必需词")
 
     for kw in bonus_keywords:
         if kw.lower() in combined_text:
-            score += 3
+            score += MATCH_BONUS_KEYWORD_SCORE
             reasons.append(f"加分词: {kw}")
 
-    # 福利加分
     welfare = prefs.get("welfare", [])
     job_welfare = job.get("welfare", "")
     if isinstance(job_welfare, str):
-        welfare_hits = sum(1 for w in welfare if w in job_welfare)
+        try:
+            welfare_list = json.loads(job_welfare)
+            welfare_hits = sum(1 for w in welfare if any(w in item for item in welfare_list))
+        except (json.JSONDecodeError, TypeError):
+            welfare_hits = sum(1 for w in welfare if w in job_welfare)
+    elif isinstance(job_welfare, list):
+        welfare_hits = sum(1 for w in welfare if any(w in item for item in job_welfare))
     else:
-        welfare_hits = sum(1 for w in welfare if w in str(job_welfare))
+        welfare_hits = 0
+
     if welfare_hits > 0:
-        score += min(welfare_hits * 3, 10)
+        score += min(welfare_hits * MATCH_WELFARE_SCORE, MATCH_WELFARE_CAP)
         reasons.append(f"福利匹配{welfare_hits}项")
 
     return True, min(score, 100), "; ".join(reasons) if reasons else "基础匹配"
@@ -84,6 +97,7 @@ def llm_deep_match(job: dict, resume_text: str, llm: LLMClient) -> dict:
         )
         return result
     except Exception as e:
+        logger.warning("llm_deep_match failed for %s: %s", job.get("id"), e)
         return {
             "total_score": 0,
             "dimensions": {},
@@ -97,15 +111,14 @@ def hybrid_match(job: dict, resume_text: str, prefs: dict,
     """混合评分：先规则快筛，通不过直接 pass"""
     passed, rule_score, rule_reason = rule_filter(job, prefs)
     if not passed:
-        db.update_job(job["id"], status="excluded",
-                      score_detail=f'{{"reason": "{rule_reason}"}}')
+        score_detail = json.dumps({"reason": rule_reason}, ensure_ascii=False)
+        db.update_job(job["id"], status="excluded", score_detail=score_detail)
         return None
 
-    # 规则分 >= 50 才进入 LLM 评分
-    if rule_score >= 50 and resume_text:
+    if rule_score >= MATCH_RULE_LLM_THRESHOLD and resume_text:
         llm_result = llm_deep_match(job, resume_text, llm)
         llm_score = llm_result.get("total_score", 0)
-        total = int(rule_score * 0.3 + llm_score * 0.7)
+        total = int(rule_score * MATCH_RULE_WEIGHT + llm_score * MATCH_LLM_WEIGHT)
     else:
         llm_result = {"tags": ["规则评分"]}
         total = rule_score
@@ -122,14 +135,14 @@ def hybrid_match(job: dict, resume_text: str, prefs: dict,
         "greeting_tone": llm_result.get("greeting_tone", "专业"),
     }
 
-    # 存 DB
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db.update_job(
         job["id"],
         score=total,
-        score_detail=str(llm_result.get("dimensions", {})),
-        tags=str(llm_result.get("tags", [])),
-        status="matched" if total >= 55 else "analyzed",
-        score_updated_at=__import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        score_detail=json.dumps(llm_result.get("dimensions", {}), ensure_ascii=False),
+        tags=json.dumps(llm_result.get("tags", []), ensure_ascii=False),
+        status="matched" if total >= MATCH_PASS_THRESHOLD else "analyzed",
+        score_updated_at=now,
     )
 
     return result

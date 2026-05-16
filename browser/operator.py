@@ -2,10 +2,9 @@
 import logging
 from pathlib import Path
 from typing import Optional
-from config import BOSS_DATA_DIR, LOG_LEVEL
+from config import BOSS_DATA_DIR
 
 logger = logging.getLogger("browser")
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 
 
 class BossOperator:
@@ -27,6 +26,7 @@ class BossOperator:
 
     def login(self, method: str = "auto", timeout: int = 120) -> dict:
         """登录（4级降级）"""
+        logger.info("login method=%s", method)
         try:
             if method == "cookie":
                 from boss_agent_cli.auth.cookie_extract import extract_cookies
@@ -38,6 +38,7 @@ class BossOperator:
                 token = self.auth.login(timeout=timeout, force_cdp=(method == "cdp"))
             return {"ok": True, "method": token.get("_method", "unknown"), "token": token}
         except Exception as e:
+            logger.error("login failed: %s", e)
             return {"ok": False, "error": str(e)}
 
     def check_status(self) -> dict:
@@ -49,11 +50,13 @@ class BossOperator:
                 return {"logged_in": valid, "token": token if valid else None}
             return {"logged_in": False}
         except Exception as e:
+            logger.warning("check_status failed: %s", e)
             return {"logged_in": False, "error": str(e)}
 
     def search_jobs(self, keyword: str, city: str = None, page: int = 1) -> dict:
         """搜索岗位"""
         from boss_agent_cli.platforms import get_platform
+        logger.info("search_jobs keyword=%s city=%s page=%d", keyword, city, page)
         with get_platform("zhipin", self.auth) as platform:
             raw = platform.search_jobs(keyword, city=city, page=page)
             if platform.is_success(raw):
@@ -68,6 +71,7 @@ class BossOperator:
         for item in job_list:
             jobs.append({
                 "security_id": item.get("securityId", ""),
+                "encrypt_job_id": item.get("encryptJobId", item.get("encryptBossId", "")),
                 "title": item.get("jobName", item.get("title", "")),
                 "company": item.get("brandName", ""),
                 "salary": item.get("salaryDesc", item.get("salary", "")),
@@ -76,9 +80,6 @@ class BossOperator:
                 "education": item.get("jobDegree", item.get("education", "")),
                 "skills": item.get("skills", []),
                 "welfare": item.get("welfareList", []),
-                "industry": item.get("brandIndustry", ""),
-                "scale": item.get("brandScaleName", ""),
-                "stage": item.get("brandStageName", ""),
                 "jd_raw": item.get("jobDetail", item.get("jd_raw", "")),
                 "company_info": {
                     "industry": item.get("brandIndustry", ""),
@@ -102,6 +103,7 @@ class BossOperator:
         """打招呼"""
         from boss_agent_cli.platforms import get_platform
         from boss_agent_cli.auth.manager import AuthRequired
+        logger.info("greet security_id=%s job_id=%s", security_id, job_id)
         try:
             with get_platform("zhipin", self.auth) as platform:
                 resp = platform.greet(security_id, job_id, message)
@@ -112,4 +114,5 @@ class BossOperator:
         except AuthRequired:
             return {"ok": False, "error": "AUTH_REQUIRED", "message": "请先登录"}
         except Exception as e:
+            logger.error("greet failed: %s", e)
             return {"ok": False, "error": "UNKNOWN", "message": str(e)}

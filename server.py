@@ -1,9 +1,11 @@
 """Boss Hunter MCP Server - AI 求职助手
 
-通过 MCP 协议暴露 12 个求职工具，供 OpenClaw/Claude Desktop 调用。
+通过 MCP 协议暴露 15 个求职工具，兼容 OpenClaw / Claude Code / OpenCode / Cline。
 """
 import json
 import sys
+import asyncio
+import logging
 import argparse
 from typing import Any
 
@@ -11,19 +13,51 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from tools.login import boss_login
-from tools.preference import preference_save, preference_get
-from tools.job import job_search, job_list, job_analyze
-from tools.match import job_match
-from tools.greeting import greeting_preview, greeting_send
-from tools.pipeline import pipeline_status
-from tools.resume import resume_analyze, resume_suggest
-from tools.report import report_generate
+from config import LOG_LEVEL
 
-server = Server("job-hunter")
+logger = logging.getLogger("server")
 
 
-# ── Tool 定义 ──
+def setup_logging():
+    """配置全局日志（在 main 中调用一次）"""
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stderr,
+    )
+
+
+# ── Tool 函数延迟导入，确保 logging 已配置 ──
+
+def _import_tools():
+    from tools.login import boss_login
+    from tools.preference import preference_save, preference_get
+    from tools.job import job_search, job_list, job_analyze
+    from tools.match import job_match
+    from tools.greeting import greeting_preview, greeting_send
+    from tools.pipeline import pipeline_status
+    from tools.resume import resume_analyze, resume_suggest
+    from tools.report import report_generate
+    from tools.setup import setup_status, setup_guide
+    return {
+        "boss_login": boss_login,
+        "preference_save": preference_save,
+        "preference_get": preference_get,
+        "job_search": job_search,
+        "job_list": job_list,
+        "job_analyze": job_analyze,
+        "job_match": job_match,
+        "greeting_preview": greeting_preview,
+        "greeting_send": greeting_send,
+        "pipeline_status": pipeline_status,
+        "resume_analyze": resume_analyze,
+        "resume_suggest": resume_suggest,
+        "report_generate": report_generate,
+        "setup_status": setup_status,
+        "setup_guide": setup_guide,
+    }
+
 
 TOOLS = [
     Tool(
@@ -170,44 +204,58 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="setup_status",
+        description="检测各项配置状态（Python环境/Node/Chrome/依赖/API Key/登录/意向/简历），返回完成度百分比和待办列表。首次使用时会自动引导完成配置。",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="setup_guide",
+        description="获取特定步骤的详细配置指南。topics: all/apikey/login/preferences/resume/agent",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "指南主题: all(全部)/apikey(API Key)/login(登录)/preferences(意向)/resume(简历)/agent(兼容Agent)", "default": "all"},
+            },
+        },
+    ),
 ]
 
+_tools_map = None
 
-def _call_tool(name: str, args: dict[str, Any]) -> str:
-    """调用对应 Tool 函数"""
+
+def _get_tools():
+    global _tools_map
+    if _tools_map is None:
+        _tools_map = _import_tools()
+    return _tools_map
+
+
+def _call_tool_sync(name: str, args: dict[str, Any]) -> str:
+    """同步执行 Tool（在 thread pool 中运行）"""
+    tools = _get_tools()
     try:
-        if name == "boss_login":
-            result = boss_login(**args)
-        elif name == "preference_save":
-            result = preference_save(args)
-        elif name == "preference_get":
-            result = preference_get()
-        elif name == "job_search":
-            result = job_search(**args)
-        elif name == "job_list":
-            result = job_list(**args)
-        elif name == "job_analyze":
-            result = job_analyze(**args)
-        elif name == "job_match":
-            result = job_match(**args)
-        elif name == "greeting_preview":
-            result = greeting_preview(**args)
-        elif name == "greeting_send":
-            result = greeting_send(**args)
-        elif name == "pipeline_status":
-            result = pipeline_status()
-        elif name == "resume_analyze":
-            result = resume_analyze(**args)
-        elif name == "resume_suggest":
-            result = resume_suggest()
-        elif name == "report_generate":
-            result = report_generate(**args)
+        if name == "preference_save":
+            result = tools["preference_save"](args)
+        elif name == "setup_guide":
+            result = tools["setup_guide"](args.get("topic", "all"))
+        elif name in ("preference_get", "pipeline_status", "resume_suggest", "setup_status"):
+            result = tools[name]()
         else:
-            result = {"ok": False, "error": f"未知 Tool: {name}"}
+            result = tools[name](**args)
 
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
+        logger.exception("Tool %s failed", name)
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+
+async def _call_tool(name: str, args: dict[str, Any]) -> str:
+    """异步 Tool 入口：将同步调用放到线程池中执行，避免阻塞事件循环。"""
+    return await asyncio.to_thread(_call_tool_sync, name, args)
+
+
+server = Server("job-hunter")
 
 
 @server.list_tools()
@@ -217,7 +265,8 @@ async def handle_list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
-    result = _call_tool(name, arguments)
+    logger.info("Tool called: %s", name)
+    result = await _call_tool(name, arguments)
     return [TextContent(type="text", text=result)]
 
 
@@ -226,7 +275,8 @@ def main():
     parser.add_argument("--transport", default="stdio", choices=["stdio"])
     args = parser.parse_args()
 
-    import asyncio
+    setup_logging()
+
     async def run():
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())

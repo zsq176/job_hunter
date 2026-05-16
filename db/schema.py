@@ -3,6 +3,7 @@ SCHEMA_SQL = """
 -- 岗位表
 CREATE TABLE IF NOT EXISTS jobs (
     id                TEXT PRIMARY KEY,
+    encrypt_job_id    TEXT,
     platform          TEXT DEFAULT 'zhipin',
     search_keyword    TEXT,
     title             TEXT NOT NULL,
@@ -94,3 +95,7 @@ CREATE TABLE IF NOT EXISTS preferences (
     updated_at        TEXT DEFAULT (datetime('now','localtime'))
 );
 """
+
+MIGRATIONS = [
+    """ALTER TABLE jobs ADD COLUMN encrypt_job_id TEXT""",
+]
