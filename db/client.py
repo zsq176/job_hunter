@@ -15,6 +15,15 @@ logger = logging.getLogger("db")
 
 SORT_WHITELIST = {"score", "created_at", "salary", "salary_min", "salary_max", "title", "company"}
 
+JOB_COLUMN_WHITELIST = {
+    "encrypt_job_id", "platform", "search_keyword", "title", "company",
+    "salary_raw", "salary_min", "salary_max", "city", "experience", "education",
+    "welfare", "jd_raw", "jd_analyzed", "jd_analyzed_at", "company_info",
+    "status", "score", "score_detail", "score_updated_at", "tags",
+    "greeting_sent", "greeting_text", "greeting_sent_at", "greeting_status",
+    "updated_at",
+}
+
 
 class Database:
     """数据库操作封装"""
@@ -109,6 +118,9 @@ class Database:
 
     def update_job(self, job_id: str, **kwargs):
         """更新岗位字段"""
+        invalid = set(kwargs.keys()) - JOB_COLUMN_WHITELIST
+        if invalid:
+            raise ValueError(f"Invalid column(s): {', '.join(sorted(invalid))}")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         kwargs["updated_at"] = now
         sets = ", ".join(f"{k}=?" for k in kwargs)

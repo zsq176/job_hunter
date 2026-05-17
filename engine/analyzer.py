@@ -44,9 +44,14 @@ def analyze_resume(resume_text: str, db: Database, llm: LLMClient) -> dict:
 
     try:
         result = llm.analyze_resume(resume_text, market_keywords)
+        full_report = json.dumps({
+            "strengths": result.get("strengths", []),
+            "weaknesses": result.get("weaknesses", []),
+            "missing_keywords": result.get("missing_keywords", []),
+        }, ensure_ascii=False)
         db.update_resume_analysis(
             resume_id,
-            report=json.dumps(result.get("strengths", []), ensure_ascii=False),
+            report=full_report,
             suggestions=json.dumps(result.get("suggestions", []), ensure_ascii=False),
         )
         result["market_keywords"] = market_keywords
@@ -63,6 +68,8 @@ def generate_report(db: Database, llm: LLMClient, report_type: str = "weekly") -
     greeting_history = db.get_recent_greetings(7)
 
     try:
+        if report_type == "daily":
+            return llm.generate_daily_report(stats, greeting_history)
         return llm.generate_weekly_report(stats, greeting_history)
     except Exception as e:
         logger.error("generate_report failed: %s", e)

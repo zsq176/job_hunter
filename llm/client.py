@@ -170,3 +170,29 @@ JD 内容：
             {"role": "system", "content": "你是一个求职助手。生成简洁、有数据支撑的求职周报。"},
             {"role": "user", "content": prompt},
         ])
+
+    def generate_daily_report(self, stats: dict, greeting_history: list[dict]) -> str:
+        """生成求职日报"""
+        import datetime
+        today = datetime.date.today()
+
+        prompt = f"""
+## 今日统计（{today}）
+- 总岗位数: {stats.get('total_jobs', 0)}
+- 已分析: {stats.get('analyzed', 0)}
+- 高匹配: {stats.get('matched_high', 0)}
+- 已打招呼: {stats.get('greeted', 0)}
+- 有回复: {stats.get('replied', 0)}
+
+## 今日打招呼记录
+{json.dumps(greeting_history, ensure_ascii=False, indent=2) if greeting_history else "暂无"}
+
+请生成一份简洁的求职日报，包含：
+1. 今日求职进度摘要
+2. 关键数据
+3. 明日行动建议"""
+        logger.info("generate_daily_report")
+        return self._call([
+            {"role": "system", "content": "你是一个求职助手。生成简洁、有数据支撑的求职日报。"},
+            {"role": "user", "content": prompt},
+        ])

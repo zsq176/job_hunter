@@ -34,9 +34,8 @@ def resume_suggest() -> dict:
         return {"ok": False, "error": "请先上传简历"}
 
     market_keywords = db.get_market_keywords(10)
-    salary_pref = db.get_preference("salary")
-    salary_min = salary_pref.get("min", 0) if salary_pref else 0
-    salary_max = salary_pref.get("max", 0) if salary_pref else 0
+    salary_min = db.get_preference("salary_min") or 0
+    salary_max = db.get_preference("salary_max") or 0
 
     market_median = db.get_market_salary_median()
 

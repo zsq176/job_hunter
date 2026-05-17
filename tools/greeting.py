@@ -1,6 +1,7 @@
 """打招呼 Tool"""
 import time
 import random
+import uuid
 import logging
 from typing import Optional
 from db.client import Database
@@ -52,6 +53,7 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
 
     resume = db.get_active_resume()
     resume_text = resume["raw_text"] if resume else ""
+    batch_id = uuid.uuid4().hex[:12]
 
     results = []
     sent_count = 0
@@ -78,13 +80,13 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
         resp = ops.greet(security_id, encrypt_job_id, message)
 
         if resp.get("ok"):
-            db.record_greeting(job_id, "success", message)
+            db.record_greeting(job_id, "success", message, batch_id=batch_id)
             results.append({"job_id": job_id, "status": "success", "greeting": message})
             sent_count += 1
             logger.info("greeting sent job_id=%s", job_id)
         else:
             error_code = resp.get("error", "UNKNOWN")
-            db.record_greeting(job_id, "failed", message, error=error_code)
+            db.record_greeting(job_id, "failed", message, error=error_code, batch_id=batch_id)
             results.append({"job_id": job_id, "status": "failed", "error": error_code})
             logger.warning("greeting failed job_id=%s error=%s", job_id, error_code)
             if error_code == "RATE_LIMITED":
@@ -99,6 +101,7 @@ def greeting_send(job_ids: list[str], custom_message: Optional[str] = None,
 
     return {
         "ok": True,
+        "batch_id": batch_id,
         "sent": sum(1 for r in results if r["status"] == "success"),
         "failed": sum(1 for r in results if r["status"] == "failed"),
         "results": results,

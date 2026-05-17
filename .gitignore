@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+.pytest_cache/
 .env
-data/boss_hunter.db
-data/auth/
+data/
+*.egg-info/
+dist/
+.venv/
+venv/

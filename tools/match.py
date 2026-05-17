@@ -17,6 +17,8 @@ def job_match(resume_text: Optional[str] = None, job_ids: Optional[list[str]] = 
         if not resume:
             return {"ok": False, "error": "请先上传简历", "matched": 0, "results": []}
         resume_text = resume["raw_text"]
+    else:
+        db.save_resume(resume_text)
 
     if job_ids:
         jobs = [db.get_job(jid) for jid in job_ids]

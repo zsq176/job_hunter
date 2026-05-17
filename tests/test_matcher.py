@@ -99,8 +99,9 @@ class TestHybridMatch:
         job = {
             "id": "x2", "title": "Python", "company": "Acme",
             "jd_raw": "需要Python", "company_info": "{}",
+            "city": "北京",
         }
-        prefs = {}
+        prefs = {"cities": ["北京"], "salary_min": 15, "salary_max": 40}
         result = hybrid_match(job, "resume", prefs, llm, db)
         assert result is not None
         assert result["score"] > 0
